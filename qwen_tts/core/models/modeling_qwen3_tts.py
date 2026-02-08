@@ -2912,7 +2912,7 @@ class Qwen3TTSForConditionalGeneration(Qwen3TTSPreTrainedModel, GenerationMixin)
                     wav = np.concatenate([head, wav[ov:]], axis=0)
 
             # Apply fade-out at very end of audio to avoid pop on completion
-            if len(wav) > blend_samples:
+            if blend_samples > 0 and len(wav) > blend_samples:
                 fade_len = min(blend_samples, len(wav))
                 t = np.arange(fade_len, dtype=np.float32) / max(fade_len - 1, 1)
                 fade_out = 0.5 * (1 + np.cos(np.pi * t))  # Hann fade-out
@@ -3248,7 +3248,7 @@ class Qwen3TTSForConditionalGeneration(Qwen3TTSPreTrainedModel, GenerationMixin)
                     head = _crossfade(decoded_tails[b][-ov:], wav[:ov])
                     wav = np.concatenate([head, wav[ov:]], axis=0)
 
-            if len(wav) > blend_samples:
+            if blend_samples > 0 and len(wav) > blend_samples:
                 fade_len = min(blend_samples, len(wav))
                 t = np.arange(fade_len, dtype=np.float32) / max(fade_len - 1, 1)
                 fade_out = 0.5 * (1 + np.cos(np.pi * t))
