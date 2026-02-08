@@ -16,6 +16,111 @@ Added in this fork:
 - **Hann window crossfade** - click-free chunk boundaries with proper fade-in/fade-out
 - **Batch streaming** - process multiple texts in a single batched transformer pass with `batch_stream_generate_voice_clone()`, with per-item state management and independent EOS detection
 
+## Installation
+
+```bash
+sudo apt install sox
+pip install torch torchaudio flash-attn
+pip install -e .
+```
+
+## Usage
+
+```python
+import torch
+import sounddevice as sd
+from qwen_tts import Qwen3TTSModel
+
+# Load model
+model = Qwen3TTSModel.from_pretrained(
+    "Qwen/Qwen3-TTS-12Hz-Base",
+    torch_dtype=torch.bfloat16,
+    device_map="cuda",
+)
+
+# Enable optimizations (recommended for streaming)
+model.enable_streaming_optimizations(
+    decode_window_frames=80,
+    use_compile=True,
+    compile_mode="reduce-overhead",
+)
+
+# Create voice clone prompt from reference audio
+prompt = model.create_voice_clone_prompt(
+    ref_audio="reference.wav",
+    ref_text="Transcript of the reference audio.",
+)
+
+# Stream audio with two-phase settings
+for chunk, sr in model.stream_generate_voice_clone(
+    text="Hello, this is a streaming TTS demo!",
+    language="en",
+    voice_clone_prompt=prompt,
+    # Phase 2 settings (stable)
+    emit_every_frames=12,
+    decode_window_frames=80,
+    # Phase 1 settings (fast first chunk)
+    first_chunk_emit_every=5,
+    first_chunk_decode_window=48,
+    first_chunk_frames=48,
+):
+    sd.play(chunk, sr)
+    sd.wait()
+```
+
+## Batch Streaming
+
+Generate audio for multiple texts in a single batched pass through the transformer. All items advance in lockstep, sharing the KV cache. A single voice prompt can be broadcast to all items, or you can pass one per item.
+
+```python
+import numpy as np
+import soundfile as sf
+
+# Batch of texts (same voice prompt broadcast to all)
+texts = [
+    "First sentence to synthesize.",
+    "Second sentence, different text.",
+    "Third sentence in the batch.",
+]
+
+# Accumulate per-item chunks
+item_chunks = [[] for _ in range(len(texts))]
+
+for chunks_list, sr in model.batch_stream_generate_voice_clone(
+    text=texts,
+    language="English",              # broadcast to all items
+    voice_clone_prompt=prompt,       # broadcast to all items
+    emit_every_frames=8,
+    decode_window_frames=80,
+    first_chunk_emit_every=5,
+    first_chunk_decode_window=48,
+    first_chunk_frames=48,
+):
+    for i, chunk in enumerate(chunks_list):
+        if chunk.size > 0:
+            item_chunks[i].append(chunk)
+
+# Save each item
+for i, chunks in enumerate(item_chunks):
+    if chunks:
+        sf.write(f"output_{i}.wav", np.concatenate(chunks), sr)
+```
+
+Items finish independently (per-item EOS detection), but the generator keeps yielding until all items are done. Finished items receive empty arrays.
+
+## Streaming Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `emit_every_frames` | 8 | Emit audio every N frames |
+| `decode_window_frames` | 80 | Decoder context window |
+| `overlap_samples` | 512 | Crossfade overlap between chunks (0 to disable) |
+| `max_frames` | 10000 | Maximum codec frames to generate |
+| `first_chunk_emit_every` | 0 | Phase 1 emit interval (0 = disabled) |
+| `first_chunk_decode_window` | 48 | Phase 1 decode window |
+| `first_chunk_frames` | 48 | Switch to phase 2 after N frames |
+| `repetition_penalty` | 1.0 | Penalizes repeated tokens (1.0 = disabled). Fixes streaming runaway voice speed issues |
+
 ## Two-Phase Streaming
 
 Standard streaming with Qwen's TTS library waits for `emit_every_frames` (e.g., 12) before emitting the first audio. Two-phase uses aggressive settings for the first chunk to improve latency, then switches to stable settings.
@@ -112,111 +217,6 @@ model.enable_streaming_optimizations(
 | `compile_mode` | "reduce-overhead" | torch.compile mode |
 | `use_fast_codebook` | False | Use fast codebook generation (experimental) |
 | `compile_codebook_predictor` | True | Apply torch.compile to codebook predictor |
-
-## Usage
-
-```python
-import torch
-import sounddevice as sd
-from qwen_tts import Qwen3TTSModel
-
-# Load model
-model = Qwen3TTSModel.from_pretrained(
-    "Qwen/Qwen3-TTS-12Hz-Base",
-    torch_dtype=torch.bfloat16,
-    device_map="cuda",
-)
-
-# Enable optimizations (recommended for streaming)
-model.enable_streaming_optimizations(
-    decode_window_frames=80,
-    use_compile=True,
-    compile_mode="reduce-overhead",
-)
-
-# Create voice clone prompt from reference audio
-prompt = model.create_voice_clone_prompt(
-    ref_audio="reference.wav",
-    ref_text="Transcript of the reference audio.",
-)
-
-# Stream audio with two-phase settings
-for chunk, sr in model.stream_generate_voice_clone(
-    text="Hello, this is a streaming TTS demo!",
-    language="en",
-    voice_clone_prompt=prompt,
-    # Phase 2 settings (stable)
-    emit_every_frames=12,
-    decode_window_frames=80,
-    # Phase 1 settings (fast first chunk)
-    first_chunk_emit_every=5,
-    first_chunk_decode_window=48,
-    first_chunk_frames=48,
-):
-    sd.play(chunk, sr)
-    sd.wait()
-```
-
-## Batch Streaming
-
-Generate audio for multiple texts in a single batched pass through the transformer. All items advance in lockstep, sharing the KV cache. A single voice prompt can be broadcast to all items, or you can pass one per item.
-
-```python
-import numpy as np
-import soundfile as sf
-
-# Batch of texts (same voice prompt broadcast to all)
-texts = [
-    "First sentence to synthesize.",
-    "Second sentence, different text.",
-    "Third sentence in the batch.",
-]
-
-# Accumulate per-item chunks
-item_chunks = [[] for _ in range(len(texts))]
-
-for chunks_list, sr in model.batch_stream_generate_voice_clone(
-    text=texts,
-    language="English",              # broadcast to all items
-    voice_clone_prompt=prompt,       # broadcast to all items
-    emit_every_frames=8,
-    decode_window_frames=80,
-    first_chunk_emit_every=5,
-    first_chunk_decode_window=48,
-    first_chunk_frames=48,
-):
-    for i, chunk in enumerate(chunks_list):
-        if chunk.size > 0:
-            item_chunks[i].append(chunk)
-
-# Save each item
-for i, chunks in enumerate(item_chunks):
-    if chunks:
-        sf.write(f"output_{i}.wav", np.concatenate(chunks), sr)
-```
-
-Items finish independently (per-item EOS detection), but the generator keeps yielding until all items are done. Finished items receive empty arrays.
-
-## Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `emit_every_frames` | 8 | Emit audio every N frames |
-| `decode_window_frames` | 80 | Decoder context window |
-| `overlap_samples` | 512 | Crossfade overlap between chunks (0 to disable) |
-| `max_frames` | 10000 | Maximum codec frames to generate |
-| `first_chunk_emit_every` | 0 | Phase 1 emit interval (0 = disabled) |
-| `first_chunk_decode_window` | 48 | Phase 1 decode window |
-| `first_chunk_frames` | 48 | Switch to phase 2 after N frames |
-| `repetition_penalty` | 1.0 | Penalizes repeated tokens (1.0 = disabled). Increase toward 1.05 if you hear looping artifacts |
-
-## Installation
-
-```bash
-sudo apt install sox
-pip install torch torchaudio flash-attn
-pip install -e .
-```
 
 ---
 
