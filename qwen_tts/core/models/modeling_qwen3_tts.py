@@ -617,6 +617,14 @@ class Qwen3TTSTalkerRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
+        if self.rope_type == "default" and "default" not in ROPE_INIT_FUNCTIONS:
+            # Fallback for transformers versions where "default" is not a key (e.g. older versions use "linear" or similar)
+            if "linear" in ROPE_INIT_FUNCTIONS:
+                self.rope_type = "linear"
+            else:
+                 # Last resort: grab the first available key or handle error gracefully
+                 pass 
+
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
@@ -652,6 +660,9 @@ class Qwen3TTSRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
+        if self.rope_type == "default" and "default" not in ROPE_INIT_FUNCTIONS:
+             if "linear" in ROPE_INIT_FUNCTIONS:
+                 self.rope_type = "linear"
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
