@@ -621,9 +621,11 @@ class Qwen3TTSTalkerRotaryEmbedding(nn.Module):
             # Fallback for transformers versions where "default" is not a key (e.g. older versions use "linear" or similar)
             if "linear" in ROPE_INIT_FUNCTIONS:
                 self.rope_type = "linear"
-            else:
-                 # Last resort: grab the first available key or handle error gracefully
-                 pass 
+                # Ensure factor exists for linear scaling
+                if self.config.rope_scaling is None:
+                    self.config.rope_scaling = {"type": "linear", "factor": 1.0}
+                elif isinstance(self.config.rope_scaling, dict) and "factor" not in self.config.rope_scaling:
+                    self.config.rope_scaling["factor"] = 1.0 
 
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
@@ -663,6 +665,11 @@ class Qwen3TTSRotaryEmbedding(nn.Module):
         if self.rope_type == "default" and "default" not in ROPE_INIT_FUNCTIONS:
              if "linear" in ROPE_INIT_FUNCTIONS:
                  self.rope_type = "linear"
+                 # Ensure factor exists for linear scaling
+                 if self.config.rope_scaling is None:
+                     self.config.rope_scaling = {"type": "linear", "factor": 1.0}
+                 elif isinstance(self.config.rope_scaling, dict) and "factor" not in self.config.rope_scaling:
+                     self.config.rope_scaling["factor"] = 1.0
         self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
